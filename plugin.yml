@@ -1,0 +1,14 @@
+name: Snowfall
+author: narrowtux
+main: com.narrowtux.Snowfall.Snowfall
+version: 0.1
+commands:
+    snow:
+        usage: /snow
+        description: Lets fall snow in your chunk
+    melt:
+        usage: /melt
+        description: Melts all snow in your chunk
+    biome:
+        usage: /biome
+        description: Shows in which biome you are
