@@ -1,5 +1,6 @@
 package com.narrowtux.Snowfall;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -21,37 +22,51 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 public class Snowfall extends JavaPlugin {
 	private WorldListener worldListener = new WorldListener();
-	public HashMap<Chunk, List<Block>> blocksToSnow;
-	public List<Block> blocks;
+	public List<Block> snowedBlocks = new ArrayList<Block>();
+	public List<Block> blocksToSnow = new ArrayList<Block>();
+	public List<Block> blocks = new ArrayList<Block>();
+	public Configuration config;
+	public Permission permissions;
+	private BlockListener blockListener = new BlockListener();
+	public SnowBlower snowBlower = new SnowBlower(this);
+	private SnowDelay snowDelay = new SnowDelay();
 
 	public Snowfall() {
 		blocks = new ArrayList<Block>();
+		snowDelay.plugin = this;
 	}
 
 	@Override
 	public void onDisable() {
+		snowDelay.stopTask();
 		System.out.println("Snowfall by narrowtux disbled.");
 	}
 
 	@Override
 	public void onEnable() {
-		System.out.println("Snowfall by narrowtux enabled.");
-		System.out.println("Loading all chunks...");
+		blockListener.plugin = this;
+		permissions = new Permission(getDataFolder());
+		config = new Configuration(new File(getDataFolder().getAbsolutePath()
+				+ "/snowfall.cfg"));
+		System.out.println("Loading all chunks. This can take some seconds...");
 		worldListener.plugin = this;
-		for(int wi = 0;wi<getServer().getWorlds().size();wi++){
+		for (int wi = 0; wi < getServer().getWorlds().size(); wi++) {
 			World w = getServer().getWorlds().get(wi);
-			for(int ci = 0; ci<w.getLoadedChunks().length; ci++){
+			for (int ci = 0; ci < w.getLoadedChunks().length; ci++) {
 				Chunk c = w.getLoadedChunks()[ci];
 				worldListener.scanChunk(c, false);
-				System.out.println("world "+wi+"/"+getServer().getWorlds().size()+": "+ci+"/"+w.getLoadedChunks().length+"loaded.");
+				// System.out.println("world "+wi+"/"+getServer().getWorlds().size()+": "+ci+"/"+w.getLoadedChunks().length+"loaded.");
 			}
 		}
+		System.out.println("Loading done.");
+		System.out.println("Snowfall by narrowtux enabled.");
 		getServer().getPluginManager().registerEvent(Type.CHUNK_LOADED,
 				worldListener, Priority.Normal, this);
 		getServer().getPluginManager().registerEvent(Type.CHUNK_UNLOADED,
 				worldListener, Priority.Normal, this);
-		getServer().getScheduler().scheduleSyncRepeatingTask(this,
-				new SnowBlower(this), 10, 100);
+		getServer().getPluginManager().registerEvent(Type.BLOCK_BREAK,
+				blockListener, Priority.Normal, this);
+		getServer().getScheduler().scheduleSyncDelayedTask(this, snowDelay, 10);
 	}
 
 	@Override
@@ -60,28 +75,34 @@ public class Snowfall extends JavaPlugin {
 		if (cmd.getName().equals("snow")) {
 			if (sender instanceof Player) {
 				Player p = (Player) sender;
-				Chunk c = p.getLocation().getWorld()
-				.getChunkAt(p.getLocation());
-				letItSnow(c);
-				sender.sendMessage(ChatColor.AQUA
-						+ "Let it snow! Let it snow! Let it snow! ~Sammy Cahn");
-				return true;
+				if (permissions.hasRight(p.getName())) {
+					Chunk c = p.getLocation().getWorld()
+							.getChunkAt(p.getLocation());
+					letItSnow(c);
+					sender.sendMessage(ChatColor.AQUA
+							+ "Let it snow! Let it snow! Let it snow! ~Sammy Cahn");
+					return true;
+				}
 			}
 		}
 		if (cmd.getName().equals("melt")) {
 			if (sender instanceof Player) {
 				Player p = (Player) sender;
 				Chunk c = p.getLocation().getWorld()
-				.getChunkAt(p.getLocation());
+						.getChunkAt(p.getLocation());
 				for (int x = 0; x < 16; x++) {
 					for (int z = 0; z < 16; z++) {
 						for (int y = 127; y >= 0; y--) {
 							Block b = c.getBlock(x, y, z);
 							if (b.getType().equals(Material.SNOW)) {
 								b.setType(Material.AIR);
+								snowedBlocks.remove(b.getFace(BlockFace.DOWN));
+								blocksToSnow.add(b.getFace(BlockFace.DOWN));
 								break;
 							} else if (b.getType().equals(Material.ICE)) {
 								b.setType(Material.WATER);
+								snowedBlocks.remove(b);
+								blocksToSnow.add(b);
 							}
 						}
 					}
@@ -94,7 +115,9 @@ public class Snowfall extends JavaPlugin {
 		if (cmd.getName().equals("biome")) {
 			if (sender instanceof Player) {
 				Player p = (Player) sender;
-				p.sendMessage(getBiome(p.getWorld(),p.getLocation().getBlockX(), p.getLocation().getBlockZ()).toString());
+				p.sendMessage(getBiome(p.getWorld(),
+						p.getLocation().getBlockX(),
+						p.getLocation().getBlockZ()).toString());
 				return true;
 			}
 		}
@@ -103,7 +126,11 @@ public class Snowfall extends JavaPlugin {
 
 	public boolean letItSnow(Block b) {
 		if (!b.getType().equals(Material.SNOW)) {
-			if(b.getType().equals(Material.WATER)||b.getType().equals(Material.STATIONARY_WATER)){
+			if (config.getBlocksNotToSnow().contains(b.getType())) {
+				return false;
+			}
+			if (b.getType().equals(Material.WATER)
+					|| b.getType().equals(Material.STATIONARY_WATER)) {
 				b.setType(Material.ICE);
 				return true;
 			} else {
@@ -118,6 +145,9 @@ public class Snowfall extends JavaPlugin {
 		for (int y = 127; y >= 0; y--) {
 			Block b = c.getBlock(x, y, z);
 			if (!b.getType().equals(Material.AIR)) {
+				if (config.getBlocksNotToSnow().contains(b.getType())) {
+					return false;
+				}
 				if (b.getType().equals(Material.STATIONARY_WATER)
 						|| b.getType().equals(Material.WATER)) {
 					b.setType(Material.ICE);
@@ -141,8 +171,14 @@ public class Snowfall extends JavaPlugin {
 		}
 	}
 
-	static Biome getBiome(World w, int x, int z){
-		CraftWorld world = (CraftWorld)w;
-		return Biome.valueOf(world.getHandle().a().a(x, z).m.toUpperCase().replace(" ", "_"));
+	static Biome getBiome(World w, int x, int z) {
+		CraftWorld world = (CraftWorld) w;
+		return Biome.valueOf(world.getHandle().a().a(x, z).m.toUpperCase()
+				.replace(" ", "_"));
+	}
+	
+	public void stopBlower(int delay){
+		snowDelay.stopTask();
+		getServer().getScheduler().scheduleSyncDelayedTask(this, snowDelay, delay);
 	}
 }
